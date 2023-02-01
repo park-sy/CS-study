@@ -191,5 +191,146 @@
 ```
 
 
+### 인덱스 Test
+- 목표
+    - cardinaliry에 따른 index scan 검색 row 비교
+    - 여러 조건으로 결합된 where문에서 index 선택
+    - 결합 인덱스 순서에 따른 scan 검색 row 비교
+    - where or 에서 index 비교
+    - 인덱스 크기 및 전후 insert / delete 시간 비교
+    옵티마이저에 의한 Duration 시간 측정은 제외함(추후 옵티마이저 Test에서 비교 예정)
+- Test 환경
+    - 100만건 데이터 기준으로 진행
+    - Table
+        |Column|Type|Cardinality|
+        |------|---|---|
+        |ID|INT|1,000,000|
+        |GENDER|String|2|
+        |MBTI|String|16|
+        |AGE|INT|100|
+        |REGION|INT|1,000|
+        |JOB|INT|10,000|
+        |INTEREST|INT|100,000|
+        |INCOME|INT|250,000|
+        |ASSETS|INT|500,000|
+    - 1000개 이상의 데이터는 편의상 Int로 진행
+#### 단일 where '=' 비교
+- 결과
+    - Cardinality가 높아질수록 index로 인한 효과가 커짐
+        - index를 통해 구분되는 column의 개수가 많아지기 때문    
+    - 쿼리 결과로 선택되는 row의 수가 적을수록(range가 적을수록) 인덱스 효과가 커짐
+        - 선택되는 범위가 넓을수록 index scan 보다 full table scan이 효과적이게 됨
+- Test
+    - index 적용 전 row 탐색 : 996355 
+    - MBTI (C : 16)
+        ```sql
+        Query                                       -- Full scan 검색 row 수: 996355
+        select * from user where mbti = 'ISFP';     -- 검색 row 수: 126355
+        ```
 
+    - age(C : 100)
+        ```sql
+        Query                                           -- Full scan 검색 row 수: 996355
+        select * from user where age = 27;              -- 검색 row : 17938
+        select * from user where age between 20 and 29; -- 검색 row : 189496
+        ```
+    - age(C : 100)
+        ```sql
+        Query                                           -- Full scan 검색 row 수: 996355
+        select * from user where age = 27;              -- 검색 row : 17938
+        select * from user where age between 20 and 29; -- 검색 row : 189496
+        ```
+
+    - region(C : 1000)
+        ```sql
+        Query                                       -- Full scan 검색 row 수: 996355
+        select * from user where region = 900;      -- 검색 row : 978
+        select * from user where region > 900;      -- 검색 row : 193734
+        ```
+    - job(C : 10000)
+        ```sql
+        Query                                       -- Full scan 검색 row 수: 996355
+        select * from user where job = 1000;        -- 검색 row : 85 
+        select * from user where job < 1000;        -- 검색 row : 205852 
+        ```
+    - interest(C : 100000)
+        ```sql
+        Query                                           -- Full scan 검색 row 수: 996355
+        select * from user where interest = 10000;      -- 검색 row : 11
+        select * from user where interest < 10000;      -- 검색 row : 203944
+        ```
+    - interest(C : 100000)
+        ```sql
+        Query                                           -- Full scan 검색 row 수: 996355
+        select * from user where interest = 10000;      -- 검색 row : 1 
+        select * from user where interest < 10000;      -- 검색 row : 189496
+        ```
+    - income(C : 250000)
+        ```sql
+        Query                                           -- Full scan 검색 row 수: 996355
+        select * from user where income = 100000;       -- 검색 row : 1
+        select * from user where income < 100000;       -- 검색 row : 79842
+        ```
+    - assets(C : 500000)
+        ```sql
+        Query                                           -- Full scan 검색 row 수: 996355
+        select * from user where assets = 100000;       -- 검색 row : 1
+        select * from user where assets < 100000;       -- 검색 row : 39692
+        ```
+
+#### 여러개 where and 비교
+- 결과 
+    - 여러 개의 조건이 and로 결합된 where문의 경우 가장 cardinality가 큰 column에 index를 거는 것이 효과적
+    - cardinality가 매우 작은 column에 index를 걸 경우 full table scan보다 느려짐
+    - index가 걸려있는 column에 조건이 range로 검색되는 경우 검색 속도가 저하될 수 있음
+        - 해당 range에 들어가는 모든 row에 대해 나머지 쿼리를 검색하기 때문 
+- Test
+    ```sql
+    select * from user where gender = 'male' and age = 27 and mbti = 'ISFP' and region > 900;
+    -- Full scan 검색 row 수: 996355
+    ```
+    - gender (C : 2) - 검색 row :498177
+    - mbti (C : 16) 121684
+    - age (C : 100) 17938
+    - region (C : 1000) 985
+
+#### 결합 인덱스 비교
+- 결과 
+    - 쿼리의 우선순위에 맞춰 결합 인덱스 순서를 짜는 것이 중요
+        - 우선순위 : cardinality ↑ > cardinaliry ↓ > range 탐색
+        - range 탐색이 결합 인덱스 앞에 올 경우 range를 모두 range 단일 column 인덱스와 비교시 큰 차이가 없음
+            -  (age, gender, mbti) : 172876 / age : 189496
+- Test
+    ```sql
+    select * from user where gender = 'male' and age between 20 and 29 and mbti = 'ISFP' and region = 902;
+    -- Full scan 검색 row 수: 996355
+    ```
+    - (gender, age, mbti) 85998
+    - (age, gender, mbti) 172876
+    - (mbti,age, gender) 10640
+    - (mbti,gender, age) 3100
+#### Where 'or' 비교
+- 결과
+    - or에 포함되는 모든 조건 column에 index가 걸려있다면 index_merge 실행
+        - 만약 column이 두개라면 각각에 해당하는 column을 index scan하고 그 결과를 Union
+        - 이러한 과정때문에 full table scan이 더 빠른 경우가 많음
+    - 하나라도 걸려있지 않다면 index는 적용되지 않고 full scan
+- Test
+    ```sql
+    select * from user where age = 27 or mbti = 'ISFP';
+    ```
+    - age index full scan
+    - age / mbti index - 139622
+#### 인덱스 크기
+![image](https://user-images.githubusercontent.com/53611554/216095368-008b9c16-1a8c-48f2-b4ea-d4d65797d7f3.png)  
+
+
+#### 인덱스 전후 insert / delete 시간 차이
+- insert
+![image](https://user-images.githubusercontent.com/53611554/216095434-bb0f8270-76eb-4fed-8537-47045e045483.png)
+![image](https://user-images.githubusercontent.com/53611554/216095452-9e8e6ef9-48c9-4ba0-8c56-19647ecad78c.png)
+
+- delete
+![image](https://user-images.githubusercontent.com/53611554/216095497-eebd1dae-4411-4d7b-a2b6-506e3e2b5b72.png)
+![image](https://user-images.githubusercontent.com/53611554/216095506-62fdf5b2-b9b6-495a-8ef5-60a0c0dcc38d.png)
 
