@@ -12,8 +12,7 @@
         - 선택도란, 전체 레코드 중에서 조건절에 의해 선택될 것으로 예상되는 레코드의 비율
         - 선택도 = 카디널리티 / 총 레코드 수
             - *Selectivity = Cardinality / Total Number Of Records*
-            - 선택도가 **낮을수록** 인덱스의 후보가 되기 좋다.
-            - 선택도가 높다면 테이블 엑세스만 많이 발생하기 때문
+            - 선택도가 **높을수록** 인덱스의 후보가 되기 좋다.(선택률은 낮을수록)
     - 카디널리티
         - 기수성(Cardinality), 특정 데이터 집합의 유니크(Unique)한 값의 개수
         - *Cardinality = Distinct Value 개수 = select count(distinct (column)) from table*
@@ -55,6 +54,7 @@
     - 일반적으로 사용되는 인덱스 알고리즘은 B+-Tree 알고리즘
     - B+ -Tree 인덱스는 칼럼의 값을 변형하지 않고(사실 값의 앞부분만 잘라서 관리한다.), 원래의 값을 이용해 인덱싱하는 알고리즘
     - **Q) B + - 차이?**
+    
         ![image](https://user-images.githubusercontent.com/53611554/215512680-6d6b1efc-828a-4fc2-a80a-5a5cb3a28a04.png)
         
         - key 데이터만 담음. 하나의 노드에 더 많은 key들을 담을 수 있기에 트리의 높이는 더 낮아짐.(cache hit를 높일 수 있음)
@@ -156,7 +156,7 @@
     -  즉, 뒷부분 일치 형태의 문자열 비교는 인덱스 사용이 불가능
     -  (col1, col2, col3)으로 인덱스가 이루어진 경우, WHERE 절의 비교 순서는 (col1, col2, col3), (col1, col2)와 같아야 함
         -  (col1, col3) 이나 (col2, col3)은 인덱스를 사용할 수 없음
-- 클러스터링 테이블 사용시 주의점
+- 클러스터링 테이블 사용시 주의점  
 ```프라이머리 키값에 의해 레코드의 저장 위치가 결정된다. → 프라이머리 키 값이 변경되면 레코드의 저장 위치도 바뀐다.```
     - **클러스터 인덱스 키의 크기**
         - 클러스터 테이블의 경우 모든 보조 인덱스가 프라이머리 키 값을 포함한다.
@@ -289,10 +289,10 @@
     select * from user where gender = 'male' and age = 27 and mbti = 'ISFP' and region > 900;
     -- Full scan 검색 row 수: 996355
     ```
-    - gender (C : 2) - 검색 row :498177
-    - mbti (C : 16) 121684
-    - age (C : 100) 17938
-    - region (C : 1000) 985
+    - gender (C : 2) - 검색 row 수 :498177
+    - mbti (C : 16) - 검색 row 수 : 121684
+    - age (C : 100) - 검색 row 수 : 17938
+    - region (C : 1000) - 검색 row 수 : 985
 
 #### 결합 인덱스 비교
 - 결과 
@@ -305,10 +305,10 @@
     select * from user where gender = 'male' and age between 20 and 29 and mbti = 'ISFP' and region = 902;
     -- Full scan 검색 row 수: 996355
     ```
-    - (gender, age, mbti) 85998
-    - (age, gender, mbti) 172876
-    - (mbti,age, gender) 10640
-    - (mbti,gender, age) 3100
+    - (gender, age, mbti) : 85998
+    - (age, gender, mbti) : 172876
+    - (mbti,age, gender) : 10640
+    - (mbti,gender, age) : 3100
 #### Where 'or' 비교
 - 결과
     - or에 포함되는 모든 조건 column에 index가 걸려있다면 index_merge 실행
@@ -319,18 +319,27 @@
     ```sql
     select * from user where age = 27 or mbti = 'ISFP';
     ```
-    - age index full scan
-    - age / mbti index - 139622
+    - age만 있을 경우 : full table scan
+    - age / mbti : index merge(검색 row : 139622)
 #### 인덱스 크기
 ![image](https://user-images.githubusercontent.com/53611554/216095368-008b9c16-1a8c-48f2-b4ea-d4d65797d7f3.png)  
 
 
 #### 인덱스 전후 insert / delete 시간 차이
+- 전반적으로 실행시간이 증가하였으며 1개가 아닌 수많은 쿼리가 발생할 경우 transaction 문제와 얽혀 크게 시간 차이가 날 수 있음 
 - insert
-![image](https://user-images.githubusercontent.com/53611554/216095434-bb0f8270-76eb-4fed-8537-47045e045483.png)
-![image](https://user-images.githubusercontent.com/53611554/216095452-9e8e6ef9-48c9-4ba0-8c56-19647ecad78c.png)
+    - 적용 전
+    
+    ![image](https://user-images.githubusercontent.com/53611554/216095434-bb0f8270-76eb-4fed-8537-47045e045483.png)
+    - 적용 후
+    
+    ![image](https://user-images.githubusercontent.com/53611554/216095452-9e8e6ef9-48c9-4ba0-8c56-19647ecad78c.png)
 
 - delete
-![image](https://user-images.githubusercontent.com/53611554/216095497-eebd1dae-4411-4d7b-a2b6-506e3e2b5b72.png)
-![image](https://user-images.githubusercontent.com/53611554/216095506-62fdf5b2-b9b6-495a-8ef5-60a0c0dcc38d.png)
+    - 적용 전 
+    
+    ![image](https://user-images.githubusercontent.com/53611554/216095497-eebd1dae-4411-4d7b-a2b6-506e3e2b5b72.png)
+    - 적용 후
+    
+    ![image](https://user-images.githubusercontent.com/53611554/216095506-62fdf5b2-b9b6-495a-8ef5-60a0c0dcc38d.png)
 
